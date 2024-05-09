@@ -1,0 +1,27 @@
+{
+    "$schema": "https://getcomposer.org/schema.json",
+    "name": "zekfad/xml",
+    "version": "1.0.0",
+    "description": "Reflection based automatic Sabre XML reader and writer interface.",
+    "keywords" : [ "XML", "XMLReader", "XMLWriter" ],
+    "homepage" : "https://github.com/Zekfad/php-xml",
+    "type": "library",
+    "require": {
+        "php": "^8.0",
+        "sabre/xml": "^4.0"
+    },
+    "license": "ISC",
+    "autoload": {
+        "psr-4": {
+            "Zekfad\\Xml\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Yaroslav Vorobev",
+            "email": "zekfad@null.moe",
+            "homepage" : "https://null.moe/",
+            "role": "Developer"
+        }
+    ]
+}
