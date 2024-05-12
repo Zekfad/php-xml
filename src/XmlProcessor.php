@@ -70,14 +70,14 @@ class XmlProcessor {
 			$namespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
 			if ($namespace === '{}')
 				$namespace = '';
-			$name = $namespace . ($node->name ?? $property->name);
+			$name = $namespace . ($node->getName() ?? $property->name);
 			$val = $property->getValue($value);
 			if (null !== $node->repeating) {
 				assert(is_array($val));
 				foreach ($val as $v) {
 					if ($v !== null) {
 						if ($v instanceof XmlText)
-							$writer->text($v->value);
+							$writer->text($v->text);
 						else
 							$writer->writeElement(
 								$name,
@@ -88,7 +88,7 @@ class XmlProcessor {
 			} else {
 				if ($val !== null)
 					if ($val instanceof XmlText)
-						$writer->text($val->value);
+						$writer->text($val->text);
 					else
 						$writer->writeElement(
 							$name,
@@ -198,14 +198,14 @@ class XmlProcessor {
 			}
 
 			if (!array_key_exists($parameter->name, $arguments))
-				throw new ParseException("Class $className constructor parameter $parameter->name: no XML attribute found and no default value.");
+				throw new ParseException("Class $className constructor parameter $parameter->name: no XML attribute \"$name\" found and no default value.");
 		}
 
 		/** @var array<string,class-string|callable|object> */
 		$elementMap = [ ...$reader->elementMap, ];
 		foreach ($class->getAttributes(Annotations\XmlElementMap::class) as $xmlElementMap) {
 			$attribute = $xmlElementMap->newInstance();
-			array_push($elementMap, ...$attribute->map);
+			$elementMap = [ ...$elementMap, ...$attribute->map, ];
 		};
 
 		$xmlNode = $class->getAttributes(Annotations\XmlNode::class)[0] ?? null;
@@ -262,14 +262,14 @@ class XmlProcessor {
 						case Reader::NONE:
 							throw new ParseException('We hit the end of the document prematurely. This likely means that some parser "eats" too many elements. Do not attempt to continue parsing.');
 						case Reader::END_ELEMENT:
-							/// Check remaining nodes
+							// Check remaining nodes
 							while (false !== ($node = current($nodes))) {
 								list($parameter, $node) = $node;
 								$clarkNamespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
-								$nodeName = $clarkNamespace . ($node->name ?? $parameter->name);
+								$nodeName = $clarkNamespace . ($node->getName() ?? $parameter->name);
 								// Check default value
 								if (!array_key_exists($parameter->name, $arguments))
-								throw new ParseException("Class $className: not enough elements: missing child $nodeName at position $position.");
+									throw new ParseException("Class $className: not enough elements: missing child $nodeName at position $position.");
 								next($nodes);
 							}
 							$reader->read();
@@ -292,18 +292,29 @@ class XmlProcessor {
 
 						list($parameter, $node) = $node;
 
-						if (null !== $textValue) {
+						// Skip text for non mixed nodes
+						if ($reader->nodeType !== Reader::ELEMENT) {
 							if ($node->isMixed())
 								break; // parse text
 							continue 2; // to next XML node
 						}
 
 						$clarkNamespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
-						$nodeName = $clarkNamespace . ($node->name ?? $parameter->name);
 
-						// var_dump("checking $nodeName <==> $name");
-						
-						if ($nodeName !== $name) {
+						if (!empty($nodeNames = $node->getNames())) {
+							foreach ($nodeNames as $nodeName) {
+								$nodeName = $clarkNamespace . $nodeName;
+								if ($nodeMatches = ($nodeName === $name))
+									break;
+							}
+						} else {
+							$nodeName = $clarkNamespace . $parameter->name;
+							$nodeMatches = $nodeName === $name;
+						}
+
+						// var_dump("checking $nodeName <==> $name: $nodeMatches");
+
+						if (!$nodeMatches) {
 							if ($node->isRepeating()) {
 								// Node is repeating, but we now have a different
 								// node, so stop repeating and check if min is
@@ -392,9 +403,13 @@ class XmlProcessor {
 								if ($type === XmlReparsePoint::class)
 									continue;
 
-								$parsedValue = ($rawXml !== null)
-									? static::parseReparsePoint($type, $reader, $name, $rawXml)
-									: static::parseValue($type, $value);
+								// Check if value was parsed via external methods.
+								if ($value instanceof \Sabre\Xml\XmlDeserializable)
+									$parsedValue = $value;
+								else
+									$parsedValue = ($rawXml !== null)
+										? static::parseReparsePoint($type, $reader, $name, $rawXml)
+										: static::parseValue($type, $value);
 							}
 
 							if ($node->isRepeating())
@@ -408,7 +423,6 @@ class XmlProcessor {
 							$lastException = $e;
 						}
 					}
-
 					throw new ParseException(
 						"Class $className have invalid type of child element" .
 						" $nodeName at position $position:" .

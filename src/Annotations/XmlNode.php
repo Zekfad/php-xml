@@ -11,20 +11,39 @@ class XmlNode {
 	public const REPEATING_OPTIONAL = [ 0, PHP_INT_MAX, ];
 
 	/**
-	 * @param ?string $name Element name.
+	 * @param null|string|array $name Element name.
 	 * @param null|class-string|class-string[] $type Type or type union of element.
 	 * @param ?array{0:int,1:int} $repeating Min and Max element repetition value.
-	//  * @param bool $mixed Whether to allow mixed content (in such case element
-	//  *                    must include `string` in `$type` and have `array` PHP type).
 	 * @param ?string $namespace Element namespace.
 	 */
 	public function __construct(
-		public ?string $name = null,
+		public null|string|array $name = null,
 		public null|string|array $type = null,
 		public ?array $repeating = null,
-		// public bool $mixed = false,
 		public ?string $namespace = null,
 	) {}
+
+	/**
+	 * Get main name of a node.
+	 * 
+	 * @return ?string
+	 */
+	public function getName(): ?string {
+		return is_array($this->name)
+			? ($this->name[0] ?? null)
+			: $this->name;
+	}
+
+	/**
+	 * Get main name of a node.
+	 * 
+	 * @return string[]
+	 */
+	public function getNames(): array {
+		return is_array($this->name)
+			? $this->name
+			: [ $this->name, ];
+	}
 
 	/**
 	 * Get repeating value.

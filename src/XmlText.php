@@ -9,18 +9,18 @@ use Sabre\Xml\Writer;
 /**
  * XmlText wraps mixed text between nodes.
  * 
- * Value isn't trimmed and stored as is.
+ * Text isn't trimmed and stored as is.
  */
 class XmlText implements Element {
 	/**
-	 * @param string $value Value.
+	 * @param string $text Value.
 	 */
 	public function __construct(
-		public string $value = '',
+		public string $text = '',
 	) {}
 
 	public function xmlSerialize(Writer $writer): void {
-		$writer->text($this->value);
+		$writer->text($this->text);
 	}
 
 	public static function xmlDeserialize(Reader $reader) {
