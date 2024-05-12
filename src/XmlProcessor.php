@@ -37,10 +37,15 @@ class XmlProcessor {
 			$xmlAttribute = $property->getAttributes(Annotations\XmlAttribute::class)[0] ?? null;
 			if ($xmlAttribute) {
 				$attribute = $xmlAttribute->newInstance();
-				$val = $property->getValue($value);
+
+				$name = $attribute->name ?? $property->name;
+				if (null !== $attribute->namespace)
+					$name = '{' . $attribute->namespace . '}' . $name;
+
+					$val = $property->getValue($value);
 				if (null !== $val)
 					$writer->writeAttribute(
-						($attribute->name ?? $property->name),
+						$name,
 						(string) $property->getValue($value),
 					);
 				continue;
@@ -65,22 +70,30 @@ class XmlProcessor {
 			$namespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
 			if ($namespace === '{}')
 				$namespace = '';
+			$name = $namespace . ($node->name ?? $property->name);
 			$val = $property->getValue($value);
 			if (null !== $node->repeating) {
 				assert(is_array($val));
 				foreach ($val as $v) {
-					if ($v !== null)
-						$writer->writeElement(
-							$namespace . ($node->name ?? $property->name),
-							$v,
-						);
+					if ($v !== null) {
+						if ($v instanceof XmlText)
+							$writer->text($v->value);
+						else
+							$writer->writeElement(
+								$name,
+								$v,
+							);
+					}
 				}
 			} else {
 				if ($val !== null)
-					$writer->writeElement(
-						$namespace . ($node->name ?? $property->name),
-						$val,
-					);
+					if ($val instanceof XmlText)
+						$writer->text($val->value);
+					else
+						$writer->writeElement(
+							$name,
+							$val,
+						);
 				continue;
 			}
 		}
@@ -144,6 +157,7 @@ class XmlProcessor {
 					$arguments[$parameter->name] = [];
 					$hasDefaultValue = true;
 				}
+
 				if (!$hasDefaultValue)
 					$mustHaveChildNodes = true;
 				$nodes[] = [ $parameter, $node, ];
@@ -174,11 +188,15 @@ class XmlProcessor {
 		$parsedAttributes = $reader->parseAttributes();
 		foreach ($attributes as list($parameter, $attribute)) {
 			$name = $attribute->name ?? $parameter->name;
+			if (null !== $attribute->namespace)
+				$name = '{' . $attribute->namespace . '}' . $name;
+
 			if (isset($parsedAttributes[$name])) {
 				$value = $parsedAttributes[$name];
 				$arguments[$parameter->name] = static::parseTypeValue($parameter->getType(), $value);
 				continue;
 			}
+
 			if (!array_key_exists($parameter->name, $arguments))
 				throw new ParseException("Class $className constructor parameter $parameter->name: no XML attribute found and no default value.");
 		}
@@ -231,11 +249,19 @@ class XmlProcessor {
 						}
 					}
 
-					if ($reader->nodeType != Reader::ELEMENT) {
-						if ($reader->nodeType == Reader::NONE)
-							throw new ParseException('We hit the end of the document prematurely. This likely means that some parser "eats" too many elements. Do not attempt to continue parsing.');
-						if ($reader->nodeType == Reader::END_ELEMENT) {
+					$textValue = null;
+					switch ($reader->nodeType) {
+						case Reader::ELEMENT:
+							break;
+						case Reader::TEXT:
+						case Reader::CDATA:
+						case Reader::WHITESPACE:
+							$textValue = $reader->value;
 							$reader->read();
+							break;
+						case Reader::NONE:
+							throw new ParseException('We hit the end of the document prematurely. This likely means that some parser "eats" too many elements. Do not attempt to continue parsing.');
+						case Reader::END_ELEMENT:
 							/// Check remaining nodes
 							while (false !== ($node = current($nodes))) {
 								list($parameter, $node) = $node;
@@ -243,14 +269,15 @@ class XmlProcessor {
 								$nodeName = $clarkNamespace . ($node->name ?? $parameter->name);
 								// Check default value
 								if (!array_key_exists($parameter->name, $arguments))
-									throw new ParseException("Class $className: not enough elements: missing child $nodeName at position $position.");
+								throw new ParseException("Class $className: not enough elements: missing child $nodeName at position $position.");
 								next($nodes);
 							}
-							break;
-						}
-						$reader->read();
-						$position--; // Position tracks only elements
-						continue;
+							$reader->read();
+							break 2;
+						default:
+							$reader->read();
+							$position--; // Position tracks only elements
+							continue 2;
 					}
 					$name = $reader->getClark();
 
@@ -264,6 +291,13 @@ class XmlProcessor {
 						// next($nodes);
 
 						list($parameter, $node) = $node;
+
+						if (null !== $textValue) {
+							if ($node->isMixed())
+								break; // parse text
+							continue 2; // to next XML node
+						}
+
 						$clarkNamespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
 						$nodeName = $clarkNamespace . ($node->name ?? $parameter->name);
 
@@ -333,29 +367,36 @@ class XmlProcessor {
 					$lastException = null;
 					foreach ($types as $type) {
 						try {
-							if (is_subclass_of($type, 'Sabre\\Xml\\XmlDeserializable')) {
-								$deserializer = [$type, 'xmlDeserialize'];
+							if ($type == XmlText::class) {
+								if (null === $textValue)
+									continue; // next type
+								$parsedValue = new XmlText($textValue);
 							} else {
-								$deserializer = $reader->getDeserializerForElementName((string) $name);
+								if (is_subclass_of($type, \Sabre\Xml\XmlDeserializable::class, true)) {
+									$deserializer = [$type, 'xmlDeserialize'];
+								} else {
+									$deserializer = $reader->getDeserializerForElementName((string) $name);
+								}
+
+								if (!isset($value))
+									$value = call_user_func(
+										$deserializer,
+										$reader
+									);
+
+								if ($value instanceof XmlReparsePoint && $rawXml === null) {
+									$rawXml = $value->toRawXml();
+								}
+
+								// Do not try to parse reparse point into itself.
+								if ($type === XmlReparsePoint::class)
+									continue;
+
+								$parsedValue = ($rawXml !== null)
+									? static::parseReparsePoint($type, $reader, $name, $rawXml)
+									: static::parseValue($type, $value);
 							}
 
-							if (!isset($value))
-								$value = call_user_func(
-									$deserializer,
-									$reader
-								);
-
-							if ($value instanceof \Zekfad\Xml\XmlReparsePoint && $rawXml === null) {
-								$rawXml = $value->toRawXml();
-							}
-
-							// Do not try to parse reparse point into itself.
-							if ($type === \Zekfad\Xml\XmlReparsePoint::class)
-								continue;
-
-							$parsedValue = ($rawXml !== null)
-								? static::parseReparsePoint($type, $reader, $name, $rawXml)
-								: static::parseValue($type, $value);
 							if ($node->isRepeating())
 								$arguments[$parameter->name][] = $parsedValue;
 							else

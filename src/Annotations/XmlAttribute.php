@@ -6,5 +6,6 @@ namespace Zekfad\Xml\Annotations;
 class XmlAttribute {
 	public function __construct(
 		public ?string $name = null,
+		public ?string $namespace = null,
 	) {}
 }
