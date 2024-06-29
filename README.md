@@ -8,7 +8,7 @@ PHP 8 Annotations based XML (de)serializer working on top of `sabre\xml`.
 * Parse child nodes.
   * Support for optional elements.
   * Support for repeating elements (with optional min and max count check).
-* Parse text content.
+* Parse text content (and mixed nodes).
 * Parse union types (via `XmlPeparsePoint`).
 * Specify default value (where PHP's not available), you can mix optional
   and required parameters.

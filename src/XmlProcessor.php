@@ -78,11 +78,14 @@ class XmlProcessor {
 					if ($v !== null) {
 						if ($v instanceof XmlText)
 							$writer->text($v->text);
-						else
+						else {
 							$writer->writeElement(
-								$name,
+								$v instanceof XmlNamedElement
+									? ($v->xmlGetElementName() ?? $name)
+									: $name,
 								$v,
 							);
+						}
 					}
 				}
 			} else {
@@ -91,7 +94,9 @@ class XmlProcessor {
 						$writer->text($val->text);
 					else
 						$writer->writeElement(
-							$name,
+							$val instanceof XmlNamedElement
+								? ($val->xmlGetElementName() ?? $name)
+								: $name,
 							$val,
 						);
 				continue;
@@ -284,22 +289,28 @@ class XmlProcessor {
 					while (true) {
 						// Skip all remaining XML subtrees. 
 						if (false === ($node = current($nodes))) {
-							$reader->next();
+							throw new ParseException(
+								"Class $className received unexpected child of" .
+								" type $name at position $position.",
+							);
+							throw new ParseException("$name");
+							// $reader->next();
 							break 2;
 						}
-
-						// next($nodes);
 
 						list($parameter, $node) = $node;
 
 						// Skip text for non mixed nodes
-						if ($reader->nodeType !== Reader::ELEMENT) {
+						if ($textValue !== null) {
+						// if ($reader->nodeType !== Reader::ELEMENT) {
 							if ($node->isMixed())
 								break; // parse text
 							continue 2; // to next XML node
 						}
 
 						$clarkNamespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
+
+						// var_dump("checking " . implode(', ', $node->getNames()) . " <==> $name");
 
 						if (!empty($nodeNames = $node->getNames())) {
 							foreach ($nodeNames as $nodeName) {
@@ -372,6 +383,7 @@ class XmlProcessor {
 							$types = [ ...static::getTypeClasses($type), ];
 					}
 
+					// var_dump($types);
 					$rawXml = null;
 
 					$value = null;
@@ -383,10 +395,38 @@ class XmlProcessor {
 									continue; // next type
 								$parsedValue = new XmlText($textValue);
 							} else {
-								if (is_subclass_of($type, \Sabre\Xml\XmlDeserializable::class, true)) {
-									$deserializer = [$type, 'xmlDeserialize'];
+								unset($deserializer);
+								if (!array_key_exists($name, $reader->elementMap)) {
+									if ('{}' === substr($name, 0, 2) && array_key_exists(substr($name, 2), $reader->elementMap)) {
+										$deserializer = $reader->elementMap[substr($name, 2)];
+									} else {
+										if (is_subclass_of($type, \Sabre\Xml\XmlDeserializable::class, true)) {
+											$deserializer = [ $type, 'xmlDeserialize', ];
+										} else {
+											$deserializer = [ \Sabre\Xml\Element\Base::class, 'xmlDeserialize', ];
+										}
+									}
 								} else {
-									$deserializer = $reader->getDeserializerForElementName((string) $name);
+									$deserializer = $reader->elementMap[$name];
+								}
+								$deserializer_debug_name = is_array($deserializer) ? implode('::', $deserializer) : strval($deserializer);
+								if (!is_callable($deserializer)) {
+									if (is_subclass_of($deserializer, \Sabre\Xml\XmlDeserializable::class, true)) {
+										if (!in_array($deserializer, $types))
+											throw new ParseException("Class $className have invalid mapped parser type: $deserializer_debug_name; expected one of: " . implode(', ', $types) . ".");
+										if ($deserializer !== $type)
+											continue;
+
+										/** @var callable */
+										$deserializer = [ $type, 'xmlDeserialize'];
+									} else {
+										throw new ParseException("Class $className have invalid mapped parser type.: $deserializer_debug_name.");
+									}
+								} else {
+									assert((function() use (&$deserializer, &$className){
+										if (!is_array($deserializer) || !is_subclass_of($deserializer[0], \Sabre\Xml\XmlDeserializable::class, true))
+											trigger_error("$className uses callable parser, which cannot be tested against defined types: $deserializer", E_USER_NOTICE);
+									})());
 								}
 
 								if (!isset($value))
@@ -403,13 +443,16 @@ class XmlProcessor {
 								if ($type === XmlReparsePoint::class)
 									continue;
 
-								// Check if value was parsed via external methods.
-								if ($value instanceof \Sabre\Xml\XmlDeserializable)
-									$parsedValue = $value;
-								else
-									$parsedValue = ($rawXml !== null)
-										? static::parseReparsePoint($type, $reader, $name, $rawXml)
-										: static::parseValue($type, $value);
+								if ($rawXml !== null)
+									$parsedValue = static::parseReparsePoint($type, $reader, $name, $rawXml);
+								elseif ($value instanceof \Sabre\Xml\XmlDeserializable)
+									// Check if value was parsed via external methods.
+									$parsedValue = $value;	
+								else 
+									$parsedValue = static::parseValue($type, $value);
+
+								if ($parsedValue instanceof XmlNamedElement)
+									$parsedValue->xmlSetElementName($name);
 							}
 
 							if ($node->isRepeating())
@@ -448,6 +491,8 @@ class XmlProcessor {
 		$xmlNode = $parameter->getAttributes(Annotations\XmlNode::class)[0] ?? null;
 		if (!$xmlNode) {
 			$type = $parameter->getType()?->getName();
+			if (in_array($type, [ 'string', 'int', 'float', 'bool', ]))
+				return null;
 			if ($type) {
 				try {
 					$class = new \ReflectionClass($type);
@@ -622,6 +667,33 @@ class XmlProcessor {
 			fn (\ReflectionType $a, \ReflectionType $b) => ($typesOrder["$a"] ?? 0) - ($typesOrder["$b"] ?? 0),
 		);
 		return $types;
-	}	
+	}
 
+	/**
+	 * Convert node namespace and name to Clark notation.
+	 * @param string $namespace Namespace name.
+	 * @param string $name Node name.
+	 * @return string 
+	 */
+	static public function toClarkNotation(string $namespace, string $name): string {
+		return '{ ' .$namespace .  '}' . $name;
+	}
+
+	/**
+	 * Parse Clark notation node name to namespace and plain name.
+	 * @param string $namespace Namespace name.
+	 * @param string $name Node name.
+	 * @return array{0:string,1:string}
+	 */
+	static public function parseClarkNotation(string $name): array
+	{
+		if (!preg_match('/^{([^}]*)}(.*)$/', $name, $matches)) {
+			throw new \InvalidArgumentException('\'' . $name . '\' is not a valid clark-notation formatted string');
+		}
+
+		return [
+			$matches[1],
+			$matches[2],
+		];
+	}
 }
