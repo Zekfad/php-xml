@@ -7,7 +7,7 @@ use Sabre\Xml\Reader;
 use Sabre\Xml\Writer;
 
 /**
- * The XmlPeparsePoint element allows you to extract a portion of your xml tree,
+ * The XmlReparsePoint element allows you to extract a portion of your xml tree,
  * and get a well-formed xml string.
  *
  * This goes a bit beyond `innerXml` and friends, as we'll also match all the
