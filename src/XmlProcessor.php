@@ -70,35 +70,44 @@ class XmlProcessor {
 			$namespace = '{' . ($node->namespace ?? $currentNamespace) . '}';
 			if ($namespace === '{}')
 				$namespace = '';
+			$hasSingleExactName = count($node->getNames()) <= 1;
 			$name = $namespace . ($node->getName() ?? $property->name);
 			$val = $property->getValue($value);
 			if (null !== $node->repeating) {
 				assert(is_array($val));
 				foreach ($val as $v) {
 					if ($v !== null) {
+						$vName = $hasSingleExactName
+							? $name
+							: ($v instanceof XmlNamedElement
+									? ($v->xmlGetElementName() ?? $name)
+									: $name);
+
 						if ($v instanceof XmlText)
 							$writer->text($v->text);
 						else {
 							$writer->writeElement(
-								$v instanceof XmlNamedElement
-									? ($v->xmlGetElementName() ?? $name)
-									: $name,
+								$vName,
 								$v,
 							);
 						}
 					}
 				}
 			} else {
-				if ($val !== null)
+				if ($val !== null) {
+					$valName = $hasSingleExactName
+						? $name
+						: ($val instanceof XmlNamedElement
+								? ($val->xmlGetElementName() ?? $name)
+								: $name);
 					if ($val instanceof XmlText)
 						$writer->text($val->text);
 					else
 						$writer->writeElement(
-							$val instanceof XmlNamedElement
-								? ($val->xmlGetElementName() ?? $name)
-								: $name,
+							$valName,
 							$val,
 						);
+				}
 				continue;
 			}
 		}
