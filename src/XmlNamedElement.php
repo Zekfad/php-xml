@@ -2,7 +2,20 @@
 
 namespace Zekfad\Xml;
 
-interface XmlNamedElement {
+
+/**
+ * Elements implementing this interface will have a chance to affect it's name
+ * while parent serialized them.
+ * 
+ * Because serialization of newly created objects lack strong connection
+ * to their names in XML (remember that parent decides on a name of children)
+ * it is mostly useful for unions of multiple elements, where it allows
+ * to assign names during serialization.
+ * 
+ * NB `XmlNamedElement` is ignored if node has exact single name. This is done
+ * to support reuse of XML elements by different name.
+ */
+interface XmlNamedElement /* extends XmlElement */ {
 	/**
 	 * Get XML element name in Clark notation.
 	 * 

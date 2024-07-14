@@ -6,6 +6,9 @@ namespace Zekfad\Xml;
  * Simple implementation of `XmlNamedElement` that preserves original element
  * name as it was encountered in parse process or assumes one from `XmlNode`
  * annotation.
+ * 
+ * NB: `XmlNamedElement` is ignored if node has exact single name. This is done
+ * to support reuse of nodes by different name.
  */
 trait XmlPreserveNameTrait {
 	private string $xmlPreservedName;
